@@ -1,1 +1,336 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>RefloriaTownAI</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.16.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet"></script>
+  <style>
+    body {
+      margin: 0; background: #222;
+      color: #eee; font-family: 'Segoe UI', 'Meiryo', sans-serif;
+      min-height: 100vh;
+    }
+    .container {
+      display: flex;
+      height: 100vh;
+    }
+    .sidebar {
+      background: #181818;
+      width: 250px; min-width:180px; max-width:400px;
+      padding: 1em;
+      box-sizing: border-box;
+      border-right:1px solid #333;
+      display: flex; flex-direction: column;
+    }
+    .sidebar h2 {
+      margin-top:0; font-size:1.2em; color:#aaf;
+      margin-bottom:0.4em;
+    }
+    .file-list {
+      flex:1; overflow-y:auto; margin-bottom:1em;
+      font-size: 0.98em;
+    }
+    .file-list ul { padding-left: 1em; }
+    .file-list li {
+      padding: 0.2em 0.6em;
+      cursor: pointer; border-radius:6px;
+      transition: background 0.1s;
+    }
+    .file-list li:hover { background: #333; }
+    .info {
+      font-size:0.85em; color:#88c;
+      border-top:1px solid #333; padding-top:0.5em;
+    }
+    .main {
+      flex:1;
+      display: flex; flex-direction: column;
+      overflow: hidden;
+    }
+    header {
+      padding:1em 1.2em 0.7em 1.2em;
+      font-size:1.4em; font-weight:bold;
+      border-bottom:1.5px solid #292929;
+      background: #24262c;
+      letter-spacing:1px; color: #aef;
+      text-shadow:0 0 2px #337, 0 1px 8px #113;
+      box-shadow: 0 2px 12px #001c 1px;
+    }
+    #chat {
+      flex:1;
+      background: #202028;
+      overflow-y: auto;
+      padding:1.2em;
+      display: flex; flex-direction: column;
+      gap:10px;
+    }
+    .bubble {
+      display: flex; flex-direction: row;
+      align-items:flex-end;
+      max-width:80%;
+      margin-bottom:3px;
+      animation: fadeIn 0.2s;
+    }
+    .bubble.user { flex-direction: row-reverse; align-self: flex-end;}
+    .bubble .avatar {
+      width:36px; height:36px;
+      border-radius:50%;
+      background:#444;
+      margin: 0 7px;
+    }
+    .bubble.user .avatar { background:#2e5add;}
+    .bubble.ai .avatar { background:#00594e;}
+    .bubble .msg {
+      padding:0.75em 1em; border-radius: 1.1em;
+      background: #333d;
+      box-shadow: 0 2px 10px #0004;
+      font-size: 1.06em;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color:#eef;
+      position:relative;
+      min-width:36px;
+      transition: background 0.2s;
+    }
+    .bubble.ai .msg { background: #113d42; color:#bff;}
+    .bubble.user .msg { background:#293e7a; color: #ecf3fd;}
+    .bubble .ts {
+      font-size: 0.65em; color: #ccd9;
+      margin: 0 0.2em 0 0.2em;
+    }
+    form.input-bar {
+      display: flex; align-items: center;
+      background: #23242e; padding: 0.7em 1em;
+      border-top:1.5px solid #444;
+      gap:0.7em;
+    }
+    .input-bar input[type="text"] {
+      flex:1; padding:0.7em 1em;
+      font-size:1.1em;
+      background:#343a4a; color: #eff;
+      border:none; border-radius:8px;
+      outline:none;
+      margin-right:0.2em;
+      transition: background 0.15s;
+    }
+    .input-bar input[type="text"]:focus {
+      background:#465398;
+    }
+    .input-bar button, .input-bar label {
+      background: #101e3a;
+      color: #b4f;
+      border:none;
+      border-radius:8px;
+      padding: 0.6em 1em;
+      cursor:pointer;
+      font-size: 1em;
+      margin-left: 0.2em;
+      transition: background 0.15s, color 0.17s;
+    }
+    .input-bar .file-btn {
+      background: #023732;
+      color:#bff; font-size:1.2em;
+    }
+    .input-bar button:hover, .input-bar label:hover {
+      background:#116ad6; color:#fff;
+    }
+    @media (max-width: 700px) {
+      .container { flex-direction: column;}
+      .sidebar { width:auto; border-right:none; border-bottom:1px solid #333;}
+      .main { min-height:60vh;}
+      header{font-size:1.1em; padding:0.7em 0.8em;}
+      #chat{ padding:0.7em;}
+    }
+    @keyframes fadeIn { from{ opacity:0; translate:0 50px;} }
+    .file-preview {
+      margin-top:0.7em; max-width:95%; border-radius:8px;
+      background:#171a;
+      padding:12px;
+    }
+    .file-preview img {
+      display:block; margin:auto;
+      max-height:220px; max-width:95%; border-radius:10px;
+      box-shadow:0 0 12px #236a88a0;
+    }
+    .file-preview pre {
+      background:#223e; color:#cff; border-radius:8px;
+      overflow-x:auto; padding:12px; font-size:1em;
+    }
+    .loading { animation: blink 1s infinite alternate;}
+    @keyframes blink{ 0%{opacity:1;} 100%{opacity:0.4;} }
+  </style>
+</head>
+<body>
+<div class="container">
+  <aside class="sidebar">
+    <h2>📁 ファイル一覧</h2>
+    <div class="file-list" id="fileList"><span>読み込み中...</span></div>
+    <div class="info">
+      <b>RefloriaTownAI</b> <br>
+      ・all_files.txtの内容参照可<br>
+      ・画像ファイルはAI認識対応 <br>
+      ・テキストは直接参照<br>
+    </div>
+  </aside>
+  <main class="main">
+    <header>
+      RefloriaTownAI <span style="font-size:0.66em;color:#fff5;">(Beta)</span>
+    </header>
+    <div id="chat"></div>
+    <form class="input-bar" id="inputBar" autocomplete="off">
+      <input type="text" id="userInput" placeholder="質問・相談をどうぞ。画像/ファイルも送信可" autocomplete="off"/>
+      <label class="file-btn" for="fileInput">📎</label>
+      <input type="file" id="fileInput" accept=".txt,.jpg,.jpeg,.png,.bmp,.gif,.pdf" style="display:none;">
+      <button type="submit">送信</button>
+    </form>
+  </main>
+</div>
+<script>
+  // チャット表示
+  const chat = document.getElementById('chat');
+  function appendBubble(msg, sender="ai", previewHtml=null) {
+    const div = document.createElement('div');
+    div.className='bubble '+sender;
+    div.innerHTML=`
+      <div class="avatar"></div>
+      <div>
+        <div class="msg">${msg}</div>
+        <span class="ts">${new Date().toLocaleTimeString("ja-JP",{hour12:false})}</span>
+        ${previewHtml ? `<div class="file-preview">${previewHtml}</div>` : ''}
+      </div>
+    `;
+    chat.appendChild(div);
+    chat.scrollTop = chat.scrollHeight;
+  }
 
+  // 初期あいさつ
+  appendBubble("こんにちは！Refloria Town 非公式AIです。<br>質問や画像の解析、各種ファイル参照などご利用ください。", "ai");
+
+  // ファイル一覧をサイドバーに表示
+  let allFiles = [];
+  async function loadFileList(){
+    const el = document.getElementById('fileList');
+    try {
+      const txt = await fetch('files/all_files.txt').then(r=>r.text());
+      allFiles = txt.trim().split('\n').map(f=>f.trim()).filter(f=>f);
+      el.innerHTML = "<ul>"+allFiles.map(file=>`<li onclick="showFilePreview('${file.replaceAll("'","\\'")}')">${file}</li>`).join("")+"</ul>";
+    } catch(e){
+      el.innerHTML = "<span style='color:#f66'>ファイル一覧読み込み失敗</span>";
+    }
+  }
+  loadFileList();
+
+  // ファイルクリック: 内容プレビュー
+  window.showFilePreview = async function(fname){
+    let ext = fname.split('.').pop().toLowerCase();
+    let preview = '';
+    if(ext == 'txt'){
+      try{
+        let txt = await fetch('files/'+fname).then(r=>r.text());
+        preview = `<pre>${escapeHtml(txt.slice(0,2000))}${txt.length>2000?"\n..." : ""}</pre>`;
+        appendBubble(fname+" の内容です↓", "ai", preview);
+      }catch{ appendBubble(`${fname} の取得に失敗しました。`, "ai"); }
+    } else if(['jpg','jpeg','png','bmp','gif'].includes(ext)){
+      preview = `<img src="files/${encodeURIComponent(fname)}" alt="${fname}">`;
+      appendBubble(fname+" のプレビューです", "ai", preview);
+    } else {
+      appendBubble(fname+" のプレビュー (対応形式: txt, 画像)", "ai");
+    }
+  }
+  function escapeHtml(str) {
+    return str.replace(/[&<>"]/g, function(tag) {
+      const chars = {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'};
+      return chars[tag]||tag;
+    });
+  }
+
+  // 画像認識: モデルロード
+  let mobilenetModel = null;
+  mobilenet.load().then(model=>{mobilenetModel=model;});
+  
+  // ユーザーの入力
+  document.getElementById('inputBar').onsubmit = async function(e){
+    e.preventDefault();
+    const userInput = document.getElementById('userInput');
+    let txt = userInput.value.trim();
+    if(!txt) return;
+    appendBubble(txt, "user");
+    userInput.value="";
+    await aiResponse(txt);
+  }
+
+  async function aiResponse(txt){
+    // 簡易処理: ファイル名キーワードと一致
+    if(txt.match(/キーバインド/)&&allFiles.includes("キーバインド一覧.txt")){
+      let content = await fetch('files/キーバインド一覧.txt').then(r=>r.text()).catch(()=>null);
+      if(content)
+        appendBubble("キーバインド一覧.txtの内容です↓", "ai", `<pre>${escapeHtml(content.slice(0,2000))}</pre>`);
+      else
+        appendBubble("キーバインド一覧.txtの取得に失敗しました。", "ai");
+      return;
+    }
+    if(txt.match(/職業/)&&allFiles.find(f=>f.match(/職業一覧/))){
+      let target = allFiles.find(f=>f.match(/職業一覧/));
+      appendBubble(`${target}の画像です。`, "ai", `<img src="files/${encodeURIComponent(target)}">`);
+      return;
+    }
+    if(txt.match(/(画像|バグ|認識|スクリーン|エラー|バグ画面)/)){
+      appendBubble('画像をアップロードしてください 📷', 'ai');
+      document.getElementById('fileInput').click();
+      return;
+    }
+    appendBubble("ご質問ありがとうございます。<br>現在はファイル参照・簡単な画像解析、FAQに主に対応しています。<br>より高度なAI相談やファイル内容抽出のご希望があれば順次拡張予定です。","ai");
+  }
+
+  // ファイル選択: テキストや画像に対応
+  document.getElementById('fileInput').onchange = function(e){
+    if(this.files && this.files[0]) handleFile(this.files[0]);
+    this.value='';
+  };
+  // ドラッグ＆ドロップ
+  document.getElementById('userInput').ondrop = (e)=>{
+    e.preventDefault();
+    if(e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+  };
+  document.getElementById('userInput').ondragover = e=>e.preventDefault();
+
+  async function handleFile(file){
+    let ext = file.name.split('.').pop().toLowerCase();
+    if(['txt','md','csv','json'].includes(ext)){
+      let txt = await file.text();
+      appendBubble(`${file.name} の内容です↓`, "user", `<pre>${escapeHtml(txt.slice(0,2000))}${txt.length>2000?"...":""}</pre>`);
+    }else if(['jpg','jpeg','png','bmp','gif'].includes(ext)){
+      let reader = new FileReader();
+      reader.onload = async (ev)=>{
+        let imgHtml = `<img src="${ev.target.result}" alt="${file.name}">`;
+        appendBubble(`画像を受信しました。\nAI認識中...`, "user", imgHtml);
+        if(mobilenetModel){
+          let img = new window.Image();
+          img.src = ev.target.result;
+          img.onload = async()=>{
+            let res = await mobilenetModel.classify(img);
+            let msg = "画像認識結果<br>";
+            if(res && res.length){
+              msg += res.map(r=>`${r.className} ：確信度 ${(r.probability*100).toFixed(1)}%`).join("<br>");
+              if(res[0].className.match(/screen|error|bug/)){
+                msg+="<br><b>→ バグ画面の疑いがあります。ファイル一覧を活用しマニュアルに基づく対応がおすすめです。</b>";
+              }
+            }else{
+              msg += "認識できませんでした。";
+            }
+            appendBubble(msg,"ai",imgHtml);
+          };
+        }else{
+          appendBubble("AIモデルをロード中です。数秒後にもう一度お試しください。","ai");
+        }
+      };
+      reader.readAsDataURL(file);
+    }else{
+      appendBubble(`${file.name} (未対応形式) を受信しました。対応拡張をご希望の場合はお知らせください。`,"ai");
+    }
+  }
+
+</script>
+</body>
+</html>
